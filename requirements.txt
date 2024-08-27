@@ -1,0 +1,2 @@
+caspailleur @ git+https://github.com/EgorDudyrev/caspailleur.git
+paspailleur @ git+https://github.com/EgorDudyrev/paspailleur.git@feature/pattern_keys
