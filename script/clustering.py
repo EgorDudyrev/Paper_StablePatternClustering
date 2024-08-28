@@ -2,14 +2,63 @@ import pandas as pd
 from paspailleur import pattern_structures as PS
 
 
+
 def clustering_reward(
-    concepts_indices: list[int],
-    concepts_info: pd.DataFrame,
-    overlap_weight: float,
+    concepts_indices: list[int], 
+    concepts_info: pd.DataFrame, 
+    overlap_weight: float, 
     n_concepts_weight: float
 ) -> tuple[float, dict[str, float]]:
-    # TODO: Write (or copy-paste) the function based on the code in First_clusterisation_script notebook
-    pass
+    empty_extent = concepts_info['extent'].iat[0] & ~concepts_info['extent'].iat[0]
+
+    overlaps_per_pairs_of_concepts = [concepts_info.at[idx1, 'extent'] & concepts_info.at[idx2, 'extent']
+                                      for idx1, idx2 in combinations(concepts_indices, 2)]
+    overlapping_objects = reduce(frozenbitarray.__or__, overlaps_per_pairs_of_concepts, empty_extent)
+    covered_objects = reduce(frozenbitarray.__or__, [concepts_info.at[idx, 'extent'] for idx in concepts_indices], empty_extent)
+
+    reward_detailed = {
+        'total_cover': covered_objects.count()/len(covered_objects),
+        'overlap': overlapping_objects.count()/len(overlapping_objects),
+        'n_concepts': len(concepts_indices)
+    }
+    
+    reward = reward_detailed['total_cover'] - overlap_weight * reward_detailed['overlap'] - n_concepts_weight * reward_detailed['n_concepts']
+    reward_detailed['reward'] = reward
+    return reward, reward_detailed
+
+
+def describe_with_attributes(extent, attr_extents) -> list[int]:
+    """Find attribute-based intent for a given extent. So not a 'pattern intent'"""
+    return [i for i, attr_extent in enumerate(attr_extents) if ba_subset(extent, attr_extent)]
+
+
+def clusterise_v0(
+    concepts_info: pd.DataFrame, 
+    overlap_weight: float, 
+    n_concepts_weight: float
+) -> tuple[list[int], list[float]]:
+    selected_concepts = []
+    reward, reward_detailed = clustering_reward([], concepts_info, overlap_weight, n_concepts_weight)
+    rewards_log = [reward_detailed]
+
+    while True:
+        old_reward = reward
+        for next_cluster_candidate in concepts_info.index:
+            next_reward, next_detailed = clustering_reward(
+                selected_concepts+[next_cluster_candidate], concepts_info, overlap_weight, n_concepts_weight
+            )
+            if next_reward > reward:
+                reward, reward_detailed = next_reward, next_detailed
+                next_cluster_idx = next_cluster_candidate
+        
+        if reward == old_reward:
+            break
+        
+        selected_concepts.append(next_cluster_idx)
+        rewards_log.append(reward_detailed)
+
+    rewards_log = pd.DataFrame(rewards_log, index=pd.Series(['ø']+selected_concepts, name='Added concept idx'))
+    return selected_concepts, rewards_log
 
 
 def run_clustering(dataframe: pd.DataFrame, pat_structure: PS.CartesianPS, clustering_params: dict) -> pd.DataFrame:
@@ -35,5 +84,42 @@ def run_clustering(dataframe: pd.DataFrame, pat_structure: PS.CartesianPS, clust
         and important characteristics like delta-stability.
 
     """
-    # TODO: Write the function based on the code in First_clusterisation_script notebook
-    pass
+
+    pattern_names = clustering_params.get('column_names', ['x0','x1'])
+    min_delta_stability = clustering_params.get('min_delta_stability')
+    min_supp = clustering_params.get('min_supp')
+    min_support = clustering_params.get('min_support')
+    
+    
+    data = list(pat_structure.preprocess_data(dataframe))
+    assert len(list(ps_cart.extent(data, ps_cart.intent(data)))) == len(data)
+    attributes, attr_extents = zip(*ps_cart.iter_attributes(data, min_support))
+
+    stable_extents = csp.mine_equivalence_classes.list_stable_extents_via_gsofia(
+    attr_extents, n_objects=len(data), min_delta_stability, min_supp, use_tqdm=True, n_attributes=len(attr_extents)
+    )
+    stable_extents = sorted(stable_extents, key=lambda ext: ext.count(), reverse=True)
+    stable_intents = [ps_cart.intent(data, ext.search(True)) for ext in tqdm(stable_extents)]
+
+    delta_stabilities = [
+        csp.indices.delta_stability_by_description(
+            describe_with_attributes(extent, attr_extents), attr_extents)
+        for extent in stable_extents
+    ]
+
+    concepts_df = pd.DataFrame(dict(
+    extent=stable_extents,
+    intent=stable_intents,
+    delta_stability=delta_stabilities,
+    support=map(frozenbitarray.count, stable_extents),
+    frequency=map(lambda extent: extent.count()/len(extent), stable_extents),
+    intent_human=map(lambda intent: ps_cart.verbalize(intent, pattern_names), stable_intents)
+    ))
+
+    concepts_df = concepts_df[concepts_df['frequency']<0.8]
+
+    clustering, reward_log = clusterise_v0(concepts_df, clustering_params[overlap_weight], clustering_params[n_concepts_weight])
+
+    clusters_df = concepts_df.loc[clustering]
+
+    return clusters_df 
