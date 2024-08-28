@@ -88,6 +88,7 @@ def run_clustering(dataframe: pd.DataFrame, pat_structure: PS.CartesianPS, clust
     pattern_names = clustering_params.get('column_names', ['x0','x1'])
     min_delta_stability = clustering_params.get('min_delta_stability', 0.01)
     min_support = clustering_params.get('min_support', 0.1)
+    max_support = clustering_params.get('max_support', 0.8)
     
     
     data = list(pat_structure.preprocess_data(dataframe))
@@ -115,7 +116,7 @@ def run_clustering(dataframe: pd.DataFrame, pat_structure: PS.CartesianPS, clust
     intent_human=map(lambda intent: ps_cart.verbalize(intent, pattern_names), stable_intents)
     ))
 
-    concepts_df = concepts_df[concepts_df['frequency']<0.8]
+    concepts_df = concepts_df[concepts_df['frequency']< max_support]
 
     clustering, reward_log = clusterise_v0(concepts_df, clustering_params[overlap_weight], clustering_params[n_concepts_weight])
 
