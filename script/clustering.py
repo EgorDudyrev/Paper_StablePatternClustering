@@ -86,9 +86,8 @@ def run_clustering(dataframe: pd.DataFrame, pat_structure: PS.CartesianPS, clust
     """
 
     pattern_names = clustering_params.get('column_names', ['x0','x1'])
-    min_delta_stability = clustering_params.get('min_delta_stability')
-    min_supp = clustering_params.get('min_supp')
-    min_support = clustering_params.get('min_support')
+    min_delta_stability = clustering_params.get('min_delta_stability', 0.01)
+    min_support = clustering_params.get('min_support', 0.1)
     
     
     data = list(pat_structure.preprocess_data(dataframe))
@@ -96,7 +95,7 @@ def run_clustering(dataframe: pd.DataFrame, pat_structure: PS.CartesianPS, clust
     attributes, attr_extents = zip(*ps_cart.iter_attributes(data, min_support))
 
     stable_extents = csp.mine_equivalence_classes.list_stable_extents_via_gsofia(
-    attr_extents, n_objects=len(data), min_delta_stability, min_supp, use_tqdm=True, n_attributes=len(attr_extents)
+    attr_extents, n_objects=len(data), min_delta_stability, min_support, use_tqdm=True, n_attributes=len(attr_extents)
     )
     stable_extents = sorted(stable_extents, key=lambda ext: ext.count(), reverse=True)
     stable_intents = [ps_cart.intent(data, ext.search(True)) for ext in tqdm(stable_extents)]
