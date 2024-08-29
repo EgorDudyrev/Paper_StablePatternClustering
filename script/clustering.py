@@ -1,6 +1,12 @@
 import pandas as pd
 from paspailleur import pattern_structures as PS
+import caspailleur as csp
 
+from bitarray import frozenbitarray
+from functools import reduce
+from itertools import combinations
+from bitarray.util import subset as ba_subset
+from tqdm.auto import tqdm
 
 
 def clustering_reward(
@@ -92,14 +98,14 @@ def run_clustering(dataframe: pd.DataFrame, pat_structure: PS.CartesianPS, clust
     
     
     data = list(pat_structure.preprocess_data(dataframe))
-    assert len(list(ps_cart.extent(data, ps_cart.intent(data)))) == len(data)
-    attributes, attr_extents = zip(*ps_cart.iter_attributes(data, min_support))
+    assert len(list(pat_structure.extent(data, pat_structure.intent(data)))) == len(data)
+    attributes, attr_extents = zip(*pat_structure.iter_attributes(data, min_support))
 
     stable_extents = csp.mine_equivalence_classes.list_stable_extents_via_gsofia(
     attr_extents, n_objects=len(data), min_delta_stability, min_support, use_tqdm=True, n_attributes=len(attr_extents)
     )
     stable_extents = sorted(stable_extents, key=lambda ext: ext.count(), reverse=True)
-    stable_intents = [ps_cart.intent(data, ext.search(True)) for ext in tqdm(stable_extents)]
+    stable_intents = [pat_structure.intent(data, ext.search(True)) for ext in tqdm(stable_extents)]
 
     delta_stabilities = [
         csp.indices.delta_stability_by_description(
@@ -113,7 +119,7 @@ def run_clustering(dataframe: pd.DataFrame, pat_structure: PS.CartesianPS, clust
     delta_stability=delta_stabilities,
     support=map(frozenbitarray.count, stable_extents),
     frequency=map(lambda extent: extent.count()/len(extent), stable_extents),
-    intent_human=map(lambda intent: ps_cart.verbalize(intent, pattern_names), stable_intents)
+    intent_human=map(lambda intent: pat_structure.verbalize(intent, pattern_names), stable_intents)
     ))
 
     concepts_df = concepts_df[concepts_df['frequency']< max_support]
