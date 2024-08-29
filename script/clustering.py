@@ -42,7 +42,7 @@ def clusterise_v0(
     concepts_info: pd.DataFrame, 
     overlap_weight: float, 
     n_concepts_weight: float
-) -> tuple[list[int], list[float]]:
+) -> tuple[list[int], pd.DataFrame]:
     selected_concepts = []
     reward, reward_detailed = clustering_reward([], concepts_info, overlap_weight, n_concepts_weight)
     rewards_log = [reward_detailed]
@@ -95,14 +95,15 @@ def run_clustering(dataframe: pd.DataFrame, pat_structure: PS.CartesianPS, clust
     min_delta_stability = clustering_params.get('min_delta_stability', 0.01)
     min_support = clustering_params.get('min_support', 0.1)
     max_support = clustering_params.get('max_support', 0.8)
-    
-    
+    overlap_weight = clustering_params.get('overlap_weight', 0.01)
+    n_concepts_weight = clustering_params.get('n_concepts_weight', 0.01)
+
     data = list(pat_structure.preprocess_data(dataframe))
     assert len(list(pat_structure.extent(data, pat_structure.intent(data)))) == len(data)
     attributes, attr_extents = zip(*pat_structure.iter_attributes(data, min_support))
 
     stable_extents = csp.mine_equivalence_classes.list_stable_extents_via_gsofia(
-    attr_extents, n_objects=len(data), min_delta_stability, min_support, use_tqdm=True, n_attributes=len(attr_extents)
+        attr_extents, len(data), min_delta_stability, min_support, use_tqdm=True, n_attributes=len(attr_extents)
     )
     stable_extents = sorted(stable_extents, key=lambda ext: ext.count(), reverse=True)
     stable_intents = [pat_structure.intent(data, ext.search(True)) for ext in tqdm(stable_extents)]
@@ -114,15 +115,15 @@ def run_clustering(dataframe: pd.DataFrame, pat_structure: PS.CartesianPS, clust
     ]
 
     concepts_df = pd.DataFrame(dict(
-    extent=stable_extents,
-    intent=stable_intents,
-    delta_stability=delta_stabilities,
-    support=map(frozenbitarray.count, stable_extents),
-    frequency=map(lambda extent: extent.count()/len(extent), stable_extents),
-    intent_human=map(lambda intent: pat_structure.verbalize(intent, pattern_names), stable_intents)
+        extent=stable_extents,
+        intent=stable_intents,
+        delta_stability=delta_stabilities,
+        support=map(frozenbitarray.count, stable_extents),
+        frequency=map(lambda extent: extent.count()/len(extent), stable_extents),
+        intent_human=map(lambda intent: pat_structure.verbalize(intent, pattern_names), stable_intents)
     ))
 
-    concepts_df = concepts_df[concepts_df['frequency']< max_support]
+    concepts_df = concepts_df[concepts_df['frequency'] < max_support]
 
     clustering, reward_log = clusterise_v0(concepts_df, clustering_params[overlap_weight], clustering_params[n_concepts_weight])
 
