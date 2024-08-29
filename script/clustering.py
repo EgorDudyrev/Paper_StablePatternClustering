@@ -9,6 +9,29 @@ from bitarray.util import subset as ba_subset
 from tqdm.auto import tqdm
 
 
+def find_key_dimensions(intent, data, pattern_structure: PS.CartesianPS, top_intent=None)\
+        -> tuple[int, ...]:
+    """Return (one of) the shortest set of dimension indices from `intent` that describes the same extent"""
+    extent = set(pattern_structure.extent(data, intent))
+    top_intent = pattern_structure.intent(data) if top_intent is None else top_intent
+    non_trivial_dimensions = [i for i, pattern in enumerate(intent) if pattern != top_intent[i]]
+
+    def merge_patterns(dimensions_to_merge: list[int], intent, top_intent):
+        new_pattern = list(top_intent)
+        for i in dimensions_to_merge:
+            new_pattern[i] = intent[i]
+        return tuple(new_pattern)
+
+    for level in range(len(non_trivial_dimensions)+1):
+        for dimensions_to_change in combinations(non_trivial_dimensions, level):
+            merged_pattern = merge_patterns(dimensions_to_change, intent, top_intent)
+            next_extent = pattern_structure.extent(data, merged_pattern)
+            if all(g in extent for g in next_extent):
+                return dimensions_to_change
+
+    raise ValueError('This part of the code should never be accessed')
+
+
 def clustering_reward(
     concepts_indices: list[int], 
     concepts_info: pd.DataFrame, 
