@@ -15,8 +15,7 @@ from bitarray.util import subset as ba_subset
 from tqdm.auto import tqdm
 
 
-def find_key_dimensions(intent, data, pattern_structure: PS.CartesianPS, top_intent=None)\
-        -> tuple[int, ...]:
+def find_key_dimensions(intent, data, pattern_structure: PS.CartesianPS, top_intent=None) -> tuple[int, ...]:
     """Return (one of) the shortest set of dimension indices from `intent` that describes the same extent"""
     extent = set(pattern_structure.extent(data, intent))
     top_intent = pattern_structure.intent(data) if top_intent is None else top_intent
@@ -73,32 +72,37 @@ def clustering_reward2(
         n_concepts_max: int = 10
 ) -> tuple[float, dict[str, float]]:
     empty_extent = concepts_info['extent'].iat[0] & ~concepts_info['extent'].iat[0]
+    n_objects = len(empty_extent)
 
     coverage_score = reduce(
         frozenbitarray.__or__, [concepts_info.at[idx, 'extent'] for idx in concepts_indices], empty_extent
     ).count()
+    coverage_score /= n_objects  # normalisation
     coverage_weight = 1
 
-    overlap_score = sum(
-        (concepts_info.at[idx1, 'extent'] & concepts_info.at[idx2, 'extent']).count()
-        for idx1, idx2 in combinations(concepts_indices, 2)
-    )
-    overlap_score /= len(empty_extent) * len(concepts_indices) * (len(concepts_indices)-1) / 2  # normalisation
+    if len(concepts_indices) > 1:
+        overlap_score = sum(
+            (concepts_info.at[idx1, 'extent'] & concepts_info.at[idx2, 'extent']).count()
+            for idx1, idx2 in combinations(concepts_indices, 2)
+        )
+        overlap_score /= n_objects * len(concepts_indices) * (len(concepts_indices) - 1) / 2  # normalisation
+    else:
+        overlap_score = 0
 
     n_concepts_score = len(concepts_indices)
     n_concepts_score /= n_concepts_max  # normalisation
 
     if concepts_indices:
-        balance_score = np.var([concepts_info.at[idx, 'extent'] for idx in concepts_indices])
-        balance_score /= len(empty_extent)  # normalisation
+        balance_score = np.std([concepts_info.at[idx, 'extent'] for idx in concepts_indices], ddof=1)
+        balance_score /= n_objects  # normalisation
     else:
         balance_score = 0
 
-    stability_score = sum(concepts_info.at[idx, 'stability'] for idx in concepts_indices)/len(concepts_indices)
-    stability_score /= len(empty_extent)  # normalisation
+    stability_score = sum(concepts_info.at[idx, 'delta_stability'] for idx in concepts_indices)/len(concepts_indices)
+    stability_score /= n_objects  # normalisation
 
     simplicity_score = sum(concepts_info.at[idx, 'level'] for idx in concepts_indices)/len(concepts_indices)
-    simplicity_score /= len(concepts_info.iat[0]['intent'])  # normalisation
+    simplicity_score /= len(concepts_info['intent'].iat[0])  # normalisation
 
     reward, reward_detailed = 0, {}
     for score_name in ['coverage', 'overlap', 'n_concepts', 'balance', 'stability', 'simplicity']:
@@ -256,11 +260,16 @@ def mine_clusters_info(
         for extent in stable_extents
     ]
 
+    top_intent = pat_structure.intent(data)
+    levels = [len(find_key_dimensions(intent, data, pat_structure, top_intent)) for intent in stable_intents]
+
     return dict(
         extent=stable_extents,
         intent=stable_intents,
         delta_stability=delta_stabilities,
         support=map(frozenbitarray.count, stable_extents),
         frequency=map(lambda extent: extent.count() / len(extent), stable_extents),
-        intent_human=map(lambda intent: pat_structure.verbalize(intent, pattern_names=pattern_names), stable_intents)
+        intent_human=map(lambda intent: pat_structure.verbalize(intent, pattern_names=pattern_names), stable_intents),
+        level=levels
+
     )
