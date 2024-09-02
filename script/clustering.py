@@ -1,3 +1,6 @@
+from collections import deque
+from heapq import nlargest
+
 import pandas as pd
 from paspailleur import pattern_structures as PS
 import caspailleur as csp
@@ -7,6 +10,29 @@ from functools import reduce
 from itertools import combinations
 from bitarray.util import subset as ba_subset
 from tqdm.auto import tqdm
+
+
+def find_key_dimensions(intent, data, pattern_structure: PS.CartesianPS, top_intent=None)\
+        -> tuple[int, ...]:
+    """Return (one of) the shortest set of dimension indices from `intent` that describes the same extent"""
+    extent = set(pattern_structure.extent(data, intent))
+    top_intent = pattern_structure.intent(data) if top_intent is None else top_intent
+    non_trivial_dimensions = [i for i, pattern in enumerate(intent) if pattern != top_intent[i]]
+
+    def merge_patterns(dimensions_to_merge: list[int], intent, top_intent):
+        new_pattern = list(top_intent)
+        for i in dimensions_to_merge:
+            new_pattern[i] = intent[i]
+        return tuple(new_pattern)
+
+    for level in range(len(non_trivial_dimensions)+1):
+        for dimensions_to_change in combinations(non_trivial_dimensions, level):
+            merged_pattern = merge_patterns(dimensions_to_change, intent, top_intent)
+            next_extent = pattern_structure.extent(data, merged_pattern)
+            if all(g in extent for g in next_extent):
+                return dimensions_to_change
+
+    raise ValueError('This part of the code should never be accessed')
 
 
 def clustering_reward(
@@ -65,6 +91,41 @@ def clusterise_v0(
 
     rewards_log = pd.DataFrame(rewards_log, index=pd.Series(['ø']+selected_concepts, name='Added concept idx'))
     return selected_concepts, rewards_log
+
+
+def clusterise_v1(
+        concepts_info: pd.DataFrame,
+        overlap_weight: float,
+        n_concepts_weight: float,
+        complexity_weight: float,
+        thrift_factor: int,
+) -> tuple[list[int], pd.DataFrame]:
+    clusterings: dict[tuple[int, ...], float] = {}
+
+    basic_reward = clustering_reward([], concepts_info, overlap_weight, n_concepts_weight)[0]
+    queue = deque([([], basic_reward)])
+    while queue:
+        selected_concepts, selected_reward = queue.popleft()
+        next_rewards = (
+            (next_i, clustering_reward(selected_concepts+[next_i], concepts_info, overlap_weight, n_concepts_weight)[0])
+            for next_i in concepts_info.index
+        )
+        next_rewards = {next_i: next_reward for next_i, next_reward in next_rewards if next_reward > selected_reward}
+
+        if not next_rewards:
+            clusterings[tuple(selected_concepts)] = selected_reward
+
+        next_concepts = nlargest(thrift_factor, next_rewards, key=lambda i: next_rewards[i])
+        queue.extend([(selected_concepts + [next_i], next_rewards[next_i]) for next_i in next_concepts])
+
+    best_clustering = list(max(clusterings, key=lambda indices: clusterings[indices]))
+
+    rewards_log = pd.DataFrame(
+        [clustering_reward(best_clustering[:i], concepts_info, overlap_weight, n_concepts_weight)[1]
+         for i in range(len(best_clustering)+1)],
+        index=pd.Series(['ø'] + best_clustering, name='Added concept idx')
+    )
+    return best_clustering, rewards_log
 
 
 def run_clustering(
