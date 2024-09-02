@@ -3,6 +3,7 @@ from collections import deque
 from heapq import nlargest
 from typing import Iterable
 
+import numpy as np
 import pandas as pd
 from paspailleur import pattern_structures as PS
 import caspailleur as csp
@@ -58,6 +59,53 @@ def clustering_reward(
     
     reward = reward_detailed['total_cover'] - overlap_weight * reward_detailed['overlap'] - n_concepts_weight * reward_detailed['n_concepts']
     reward_detailed['reward'] = reward
+    return reward, reward_detailed
+
+
+def clustering_reward2(
+        concepts_indices: list[int],
+        concepts_info: pd.DataFrame,
+        overlap_weight: float = 0,
+        n_concepts_weight: float = 0,
+        balance_weight: float = 0,
+        stability_weight: float = 0,
+        simplicity_weight: float = 0,
+        n_concepts_max: int = 10
+) -> tuple[float, dict[str, float]]:
+    empty_extent = concepts_info['extent'].iat[0] & ~concepts_info['extent'].iat[0]
+
+    coverage_score = reduce(
+        frozenbitarray.__or__, [concepts_info.at[idx, 'extent'] for idx in concepts_indices], empty_extent
+    ).count()
+    coverage_weight = 1
+
+    overlap_score = sum(
+        (concepts_info.at[idx1, 'extent'] & concepts_info.at[idx2, 'extent']).count()
+        for idx1, idx2 in combinations(concepts_indices, 2)
+    )
+    overlap_score /= len(empty_extent) * len(concepts_indices) * (len(concepts_indices)-1) / 2  # normalisation
+
+    n_concepts_score = len(concepts_indices)
+    n_concepts_score /= n_concepts_max  # normalisation
+
+    if concepts_indices:
+        balance_score = np.var([concepts_info.at[idx, 'extent'] for idx in concepts_indices])
+        balance_score /= len(empty_extent)  # normalisation
+    else:
+        balance_score = 0
+
+    stability_score = sum(concepts_info.at[idx, 'stability'] for idx in concepts_indices)/len(concepts_indices)
+    stability_score /= len(empty_extent)  # normalisation
+
+    simplicity_score = sum(concepts_info.at[idx, 'level'] for idx in concepts_indices)/len(concepts_indices)
+    simplicity_score /= len(concepts_info.iat[0]['intent'])  # normalisation
+
+    reward, reward_detailed = 0, {}
+    for score_name in ['coverage', 'overlap', 'n_concepts', 'balance', 'stability', 'simplicity']:
+        sign = 1 if score_name in {'coverage', 'balance', 'stability', 'simplicity'} else -1
+        reward += locals()[f"{score_name}_weight"] * sign * locals()[f"{score_name}_score"]
+        reward_detailed[score_name] = locals()[f"{score_name}_score"]
+
     return reward, reward_detailed
 
 
