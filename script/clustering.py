@@ -101,6 +101,7 @@ def clusterise_v1(
         n_concepts_weight: float,
         complexity_weight: float,
         thrift_factor: int,
+        n_clusters_min: int
 ) -> tuple[list[int], pd.DataFrame]:
     clusterings: dict[tuple[int, ...], float] = {}
 
@@ -114,7 +115,7 @@ def clusterise_v1(
         )
         next_rewards = {next_i: next_reward for next_i, next_reward in next_rewards if next_reward > selected_reward}
 
-        if not next_rewards:
+        if not next_rewards and len(selected_concepts) >= n_clusters_min:
             clusterings[tuple(selected_concepts)] = selected_reward
 
         next_concepts = nlargest(thrift_factor, next_rewards, key=lambda i: next_rewards[i])
@@ -127,7 +128,11 @@ def clusterise_v1(
          for i in range(len(best_clustering)+1)],
         index=pd.Series(['ø'] + best_clustering, name='Added concept idx')
     )
-    return best_clustering, rewards_log
+    best_clusterings_log = pd.DataFrame(
+        [{'clustering': indices} | clustering_reward(indices, concepts_info, overlap_weight, n_concepts_weight)[1]
+         for indices in heapq.nlargest(5, clusterings, key=lambda indices: clusterings[indices])]
+    ).set_index('clustering')
+    return best_clustering, rewards_log, best_clusterings_log
 
 
 def run_clustering(
