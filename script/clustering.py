@@ -1,5 +1,7 @@
+import heapq
 from collections import deque
 from heapq import nlargest
+from typing import Iterable
 
 import pandas as pd
 from paspailleur import pattern_structures as PS
@@ -157,7 +159,7 @@ def run_clustering(
 
     """
     clustering_params = clustering_params if clustering_params is not None else dict()
-    pattern_names = clustering_params.get('column_names', [f"x{i}" for i in range(len(pat_structure.basic_structures))])
+    pattern_names = clustering_params.get('column_names')
     min_delta_stability = clustering_params.get('min_delta_stability', 0.01)
     min_support = clustering_params.get('min_support', 0.1)
     max_support = clustering_params.get('max_support', 0.8)
@@ -173,28 +175,39 @@ def run_clustering(
         n_objects=len(data), min_delta_stability=min_delta_stability, min_supp=min_support,
         use_tqdm=use_tqdm, n_attributes=len(attr_extents)
     )
-    stable_extents = sorted(stable_extents, key=lambda ext: ext.count(), reverse=True)
-    stable_intents = [pat_structure.intent(data, ext.search(True))
-                      for ext in tqdm(stable_extents, desc='Compute intents', disable=not use_tqdm)]
-
-    delta_stabilities = [
-        csp.indices.delta_stability_by_description(
-            describe_with_attributes(extent, attr_extents), attr_extents)
-        for extent in stable_extents
-    ]
-
-    concepts_df = pd.DataFrame(dict(
-        extent=stable_extents,
-        intent=stable_intents,
-        delta_stability=delta_stabilities,
-        support=map(frozenbitarray.count, stable_extents),
-        frequency=map(lambda extent: extent.count()/len(extent), stable_extents),
-        intent_human=map(lambda intent: pat_structure.verbalize(intent, pattern_names=pattern_names), stable_intents)
-    ))
-
-    concepts_df = concepts_df[concepts_df['frequency'] < max_support]
+    concepts_df = pd.DataFrame(mine_clusters_info(attr_extents, data, max_support, pat_structure, stable_extents, pattern_names, use_tqdm))
 
     clustering, reward_log = clusterise_v0(concepts_df, overlap_weight, n_concepts_weight)
     clusters_df = concepts_df.loc[clustering]
 
-    return clusters_df 
+    return clusters_df
+
+
+def mine_clusters_info(
+        stable_extents: Iterable[frozenbitarray],
+        attr_extents: list[frozenbitarray], pat_structure: PS.CartesianPS,
+        data: list,
+        min_support: float, max_support: float,
+        pattern_names: list[str] = None, use_tqdm: bool = False
+) -> dict[str, list]:
+    pattern_names = [f"x{i}" for i in range(len(pat_structure.basic_structures))]
+
+    stable_extents = [ext for ext in stable_extents if min_support*len(ext) <= ext.count() <= max_support*len(ext)]
+    stable_extents = sorted(stable_extents, key=lambda ext: ext.count(), reverse=True)
+
+    stable_intents = [pat_structure.intent(data, ext.search(True))
+                      for ext in tqdm(stable_extents, desc='Compute intents', disable=not use_tqdm)]
+
+    delta_stabilities = [csp.indices.delta_stability_by_description(
+        describe_with_attributes(extent, attr_extents), attr_extents)
+        for extent in stable_extents
+    ]
+
+    return dict(
+        extent=stable_extents,
+        intent=stable_intents,
+        delta_stability=delta_stabilities,
+        support=map(frozenbitarray.count, stable_extents),
+        frequency=map(lambda extent: extent.count() / len(extent), stable_extents),
+        intent_human=map(lambda intent: pat_structure.verbalize(intent, pattern_names=pattern_names), stable_intents)
+    )
