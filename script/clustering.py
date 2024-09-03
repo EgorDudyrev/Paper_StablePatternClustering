@@ -1,7 +1,7 @@
 import heapq
 from collections import deque
 from heapq import nlargest
-from typing import Iterable
+from typing import Iterable, Union
 
 import numpy as np
 import pandas as pd
@@ -161,8 +161,9 @@ def clusterise_v1(
         stability_weight: float,
         complexity_weight: float,
         thrift_factor: int,
-        n_clusters_min: int, n_clusters_max: int
-) -> tuple[list[int], pd.DataFrame, pd.DataFrame]:
+        n_clusters_min: int, n_clusters_max: int,
+        return_top_clusterings: bool = False
+) -> Union[tuple[list[int], pd.DataFrame], tuple[list[int], pd.DataFrame, pd.DataFrame]]:
     n_concepts = len(concepts_info['extent'])
     reward_params = dict(
         overlap_weight=overlap_weight, n_concepts_weight=n_concepts_weight,
@@ -202,7 +203,11 @@ def clusterise_v1(
         [{'clustering': indices} | clustering_reward2(indices, **reward_params)[1]
          for indices in heapq.nlargest(5, clusterings, key=lambda indices: clusterings[indices])]
     ).set_index('clustering')
-    return best_clustering, rewards_log, best_clusterings_log
+
+    if return_top_clusterings:
+        return best_clustering, rewards_log, best_clusterings_log
+    else:
+        return best_clustering, rewards_log
 
 
 def run_clustering(
