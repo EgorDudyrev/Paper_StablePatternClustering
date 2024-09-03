@@ -63,7 +63,7 @@ def clustering_reward(
 
 def clustering_reward2(
         concepts_indices: list[int],
-        concepts_info: pd.DataFrame,
+        concepts_info: dict[str, list],
         overlap_weight: float = 0,
         n_concepts_weight: float = 0,
         balance_weight: float = 0,
@@ -71,18 +71,18 @@ def clustering_reward2(
         complexity_weight: float = 0,
         n_concepts_max: int = 10
 ) -> tuple[float, dict[str, float]]:
-    empty_extent = concepts_info['extent'].iat[0] & ~concepts_info['extent'].iat[0]
+    empty_extent = concepts_info['extent'][0] & ~concepts_info['extent'][0]
     n_objects = len(empty_extent)
 
     coverage_score = reduce(
-        frozenbitarray.__or__, [concepts_info.at[idx, 'extent'] for idx in concepts_indices], empty_extent
+        frozenbitarray.__or__, [concepts_info['extent'][idx] for idx in concepts_indices], empty_extent
     ).count()
     coverage_score /= n_objects  # normalisation
     coverage_weight = 1
 
     if len(concepts_indices) > 1:
         overlap_score = sum(
-            (concepts_info.at[idx1, 'extent'] & concepts_info.at[idx2, 'extent']).count()
+            (concepts_info['extent'][idx1] & concepts_info['extent'][idx2]).count()
             for idx1, idx2 in combinations(concepts_indices, 2)
         )
         overlap_score /= n_objects * len(concepts_indices) * (len(concepts_indices) - 1) / 2  # normalisation
@@ -93,20 +93,20 @@ def clustering_reward2(
     n_concepts_score /= n_concepts_max  # normalisation
 
     if concepts_indices:
-        balance_score = np.std([concepts_info.at[idx, 'extent'] for idx in concepts_indices], ddof=1)
+        balance_score = np.std([concepts_info['extent'][idx] for idx in concepts_indices], ddof=1)
         balance_score /= n_objects  # normalisation
     else:
         balance_score = 0
 
     if concepts_indices:
-        stability_score = sum(concepts_info.at[idx, 'delta_stability'] for idx in concepts_indices)/len(concepts_indices)
+        stability_score = sum(concepts_info['delta_stability'][idx] for idx in concepts_indices)/len(concepts_indices)
         stability_score /= n_objects  # normalisation
     else:
         stability_score = 0
 
     if concepts_indices:
-        complexity_score = sum(concepts_info.at[idx, 'level'] for idx in concepts_indices)/len(concepts_indices)
-        complexity_score /= len(concepts_info['intent'].iat[0])  # normalisation
+        complexity_score = sum(concepts_info['level'][idx] for idx in concepts_indices)/len(concepts_indices)
+        complexity_score /= len(concepts_info['intent'][0])  # normalisation by n_dimensions
     else:
         complexity_score = 0
 
@@ -154,21 +154,22 @@ def clusterise_v0(
 
 
 def clusterise_v1(
-        concepts_info: pd.DataFrame,
+        concepts_info: dict[str, list],
         overlap_weight: float,
         n_concepts_weight: float,
         balance_weight: float,
         stability_weight: float,
         complexity_weight: float,
         thrift_factor: int,
-        n_clusters_min: int, n_clusters_max: int,
-) -> tuple[list[int], pd.DataFrame]:
-    clusterings: dict[tuple[int, ...], float] = {}
+        n_clusters_min: int, n_clusters_max: int
+) -> tuple[list[int], pd.DataFrame, pd.DataFrame]:
     reward_params = dict(
         overlap_weight=overlap_weight, n_concepts_weight=n_concepts_weight,
         balance_weight=balance_weight, stability_weight=stability_weight, complexity_weight=complexity_weight,
         n_concepts_max=n_clusters_max, concepts_info=concepts_info
     )
+    n_concepts = len(concepts_info['extent'])
+    clusterings: dict[tuple[int, ...], float] = {}
 
     basic_reward = clustering_reward2([], **reward_params)[0]
     queue = deque([([], basic_reward)])
@@ -178,10 +179,8 @@ def clusterise_v1(
             clusterings[tuple(selected_concepts)] = selected_reward
             continue
 
-        next_rewards = (
-            (next_i, clustering_reward2(selected_concepts+[next_i], **reward_params)[0])
-            for next_i in concepts_info.index
-        )
+        next_rewards = ((next_i, clustering_reward2(selected_concepts+[next_i], **reward_params)[0])
+                        for next_i in range(n_concepts))
         next_rewards = {next_i: next_reward for next_i, next_reward in next_rewards if next_reward > selected_reward}
 
         if not next_rewards and len(selected_concepts) >= n_clusters_min:
