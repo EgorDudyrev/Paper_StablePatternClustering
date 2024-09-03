@@ -68,7 +68,7 @@ def clustering_reward2(
         n_concepts_weight: float = 0,
         balance_weight: float = 0,
         stability_weight: float = 0,
-        simplicity_weight: float = 0,
+        complexity_weight: float = 0,
         n_concepts_max: int = 10
 ) -> tuple[float, dict[str, float]]:
     empty_extent = concepts_info['extent'].iat[0] & ~concepts_info['extent'].iat[0]
@@ -101,12 +101,12 @@ def clustering_reward2(
     stability_score = sum(concepts_info.at[idx, 'delta_stability'] for idx in concepts_indices)/len(concepts_indices)
     stability_score /= n_objects  # normalisation
 
-    simplicity_score = sum(concepts_info.at[idx, 'level'] for idx in concepts_indices)/len(concepts_indices)
-    simplicity_score /= len(concepts_info['intent'].iat[0])  # normalisation
+    complexity_score = sum(concepts_info.at[idx, 'level'] for idx in concepts_indices)/len(concepts_indices)
+    complexity_score /= len(concepts_info['intent'].iat[0])  # normalisation
 
     reward, reward_detailed = 0, {}
-    for score_name in ['coverage', 'overlap', 'n_concepts', 'balance', 'stability', 'simplicity']:
-        sign = 1 if score_name in {'coverage', 'balance', 'stability', 'simplicity'} else -1
+    for score_name in ['coverage', 'overlap', 'n_concepts', 'balance', 'stability', 'complexity']:
+        sign = 1 if score_name in {'coverage', 'balance', 'stability'} else -1
         reward += locals()[f"{score_name}_weight"] * sign * locals()[f"{score_name}_score"]
         reward_detailed[score_name] = locals()[f"{score_name}_score"]
 
