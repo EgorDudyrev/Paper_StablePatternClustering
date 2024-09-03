@@ -1,6 +1,9 @@
+import heapq
 from collections import deque
 from heapq import nlargest
+from typing import Iterable, Union
 
+import numpy as np
 import pandas as pd
 from paspailleur import pattern_structures as PS
 import caspailleur as csp
@@ -8,12 +11,11 @@ import caspailleur as csp
 from bitarray import frozenbitarray
 from functools import reduce
 from itertools import combinations
-from bitarray.util import subset as ba_subset
+from bitarray.util import subset as ba_subset, count_and
 from tqdm.auto import tqdm
 
 
-def find_key_dimensions(intent, data, pattern_structure: PS.CartesianPS, top_intent=None)\
-        -> tuple[int, ...]:
+def find_key_dimensions(intent, data, pattern_structure: PS.CartesianPS, top_intent=None) -> tuple[int, ...]:
     """Return (one of) the shortest set of dimension indices from `intent` that describes the same extent"""
     extent = set(pattern_structure.extent(data, intent))
     top_intent = pattern_structure.intent(data) if top_intent is None else top_intent
@@ -59,6 +61,64 @@ def clustering_reward(
     return reward, reward_detailed
 
 
+def clustering_reward2(
+        concepts_indices: list[int],
+        concepts_info: dict[str, list],
+        overlap_weight: float = 0,
+        n_concepts_weight: float = 0,
+        balance_weight: float = 0,
+        stability_weight: float = 0,
+        complexity_weight: float = 0,
+        n_concepts_max: int = 10,
+) -> tuple[float, dict[str, float]]:
+    empty_extent = concepts_info['extent'][0] & ~concepts_info['extent'][0]
+    n_objects = len(empty_extent)
+
+    coverage_score = reduce(
+        frozenbitarray.__or__, [concepts_info['extent'][idx] for idx in concepts_indices], empty_extent
+    ).count()
+    coverage_score /= n_objects  # normalisation
+    coverage_weight = 1
+
+    if len(concepts_indices) > 1 and overlap_weight:
+        overlap_score = sum(
+            count_and(concepts_info['extent'][idx1], concepts_info['extent'][idx2])
+            for idx1, idx2 in combinations(concepts_indices, 2)
+        )
+        overlap_score /= n_objects * len(concepts_indices) * (len(concepts_indices) - 1) / 2  # normalisation
+    else:
+        overlap_score = 0
+
+    n_concepts_score = len(concepts_indices)
+    n_concepts_score /= n_concepts_max  # normalisation
+
+    if len(concepts_indices) > 1 and balance_weight:
+        balance_score = np.std([concepts_info['support'][idx] for idx in concepts_indices], ddof=1)
+        balance_score /= n_objects  # normalisation
+    else:
+        balance_score = 0
+
+    if concepts_indices and stability_weight:
+        stability_score = sum(concepts_info['delta_stability'][idx] for idx in concepts_indices)/len(concepts_indices)
+        stability_score /= n_objects  # normalisation
+    else:
+        stability_score = 0
+
+    if concepts_indices and complexity_weight:
+        complexity_score = sum(concepts_info['level'][idx] for idx in concepts_indices)/len(concepts_indices)
+        complexity_score /= len(concepts_info['intent'][0])  # normalisation by n_dimensions
+    else:
+        complexity_score = 0
+
+    reward, reward_detailed = 0, {}
+    for score_name in ['coverage', 'overlap', 'n_concepts', 'balance', 'stability', 'complexity']:
+        sign = 1 if score_name in {'coverage', 'balance', 'stability'} else -1
+        reward += locals()[f"{score_name}_weight"] * sign * locals()[f"{score_name}_score"]
+        reward_detailed[score_name] = locals()[f"{score_name}_score"]
+
+    return reward, reward_detailed
+
+
 def describe_with_attributes(extent, attr_extents) -> list[int]:
     """Find attribute-based intent for a given extent. So not a 'pattern intent'"""
     return [i for i, attr_extent in enumerate(attr_extents) if ba_subset(extent, attr_extent)]
@@ -94,25 +154,39 @@ def clusterise_v0(
 
 
 def clusterise_v1(
-        concepts_info: pd.DataFrame,
+        concepts_info: dict[str, list],
         overlap_weight: float,
         n_concepts_weight: float,
+        balance_weight: float,
+        stability_weight: float,
         complexity_weight: float,
         thrift_factor: int,
-) -> tuple[list[int], pd.DataFrame]:
+        n_clusters_min: int, n_clusters_max: int,
+        return_top_clusterings: bool = False
+) -> Union[tuple[list[int], pd.DataFrame], tuple[list[int], pd.DataFrame, pd.DataFrame]]:
+    n_concepts = len(concepts_info['extent'])
+    reward_params = dict(
+        overlap_weight=overlap_weight, n_concepts_weight=n_concepts_weight,
+        balance_weight=balance_weight, stability_weight=stability_weight, complexity_weight=complexity_weight,
+        n_concepts_max=n_clusters_max, concepts_info=concepts_info,
+    )
+
     clusterings: dict[tuple[int, ...], float] = {}
 
-    basic_reward = clustering_reward([], concepts_info, overlap_weight, n_concepts_weight)[0]
+    basic_reward = clustering_reward2([], **reward_params)[0]
     queue = deque([([], basic_reward)])
     while queue:
         selected_concepts, selected_reward = queue.popleft()
-        next_rewards = (
-            (next_i, clustering_reward(selected_concepts+[next_i], concepts_info, overlap_weight, n_concepts_weight)[0])
-            for next_i in concepts_info.index
-        )
+        if len(selected_concepts) == n_clusters_max:
+            clusterings[tuple(selected_concepts)] = selected_reward
+            continue
+
+        selected_concepts_set = set(selected_concepts)
+        next_rewards = ((next_i, clustering_reward2(selected_concepts+[next_i], **reward_params)[0])
+                        for next_i in range(n_concepts) if next_i not in selected_concepts_set)
         next_rewards = {next_i: next_reward for next_i, next_reward in next_rewards if next_reward > selected_reward}
 
-        if not next_rewards:
+        if not next_rewards and len(selected_concepts) >= n_clusters_min:
             clusterings[tuple(selected_concepts)] = selected_reward
 
         next_concepts = nlargest(thrift_factor, next_rewards, key=lambda i: next_rewards[i])
@@ -121,11 +195,19 @@ def clusterise_v1(
     best_clustering = list(max(clusterings, key=lambda indices: clusterings[indices]))
 
     rewards_log = pd.DataFrame(
-        [clustering_reward(best_clustering[:i], concepts_info, overlap_weight, n_concepts_weight)[1]
+        [clustering_reward2(best_clustering[:i], **reward_params)[1]
          for i in range(len(best_clustering)+1)],
         index=pd.Series(['ø'] + best_clustering, name='Added concept idx')
     )
-    return best_clustering, rewards_log
+    best_clusterings_log = pd.DataFrame(
+        [{'clustering': indices} | clustering_reward2(indices, **reward_params)[1]
+         for indices in heapq.nlargest(5, clusterings, key=lambda indices: clusterings[indices])]
+    ).set_index('clustering')
+
+    if return_top_clusterings:
+        return best_clustering, rewards_log, best_clusterings_log
+    else:
+        return best_clustering, rewards_log
 
 
 def run_clustering(
@@ -157,7 +239,7 @@ def run_clustering(
 
     """
     clustering_params = clustering_params if clustering_params is not None else dict()
-    pattern_names = clustering_params.get('column_names', [f"x{i}" for i in range(len(pat_structure.basic_structures))])
+    pattern_names = clustering_params.get('column_names')
     min_delta_stability = clustering_params.get('min_delta_stability', 0.01)
     min_support = clustering_params.get('min_support', 0.1)
     max_support = clustering_params.get('max_support', 0.8)
@@ -173,28 +255,44 @@ def run_clustering(
         n_objects=len(data), min_delta_stability=min_delta_stability, min_supp=min_support,
         use_tqdm=use_tqdm, n_attributes=len(attr_extents)
     )
-    stable_extents = sorted(stable_extents, key=lambda ext: ext.count(), reverse=True)
-    stable_intents = [pat_structure.intent(data, ext.search(True))
-                      for ext in tqdm(stable_extents, desc='Compute intents', disable=not use_tqdm)]
-
-    delta_stabilities = [
-        csp.indices.delta_stability_by_description(
-            describe_with_attributes(extent, attr_extents), attr_extents)
-        for extent in stable_extents
-    ]
-
-    concepts_df = pd.DataFrame(dict(
-        extent=stable_extents,
-        intent=stable_intents,
-        delta_stability=delta_stabilities,
-        support=map(frozenbitarray.count, stable_extents),
-        frequency=map(lambda extent: extent.count()/len(extent), stable_extents),
-        intent_human=map(lambda intent: pat_structure.verbalize(intent, pattern_names=pattern_names), stable_intents)
-    ))
-
-    concepts_df = concepts_df[concepts_df['frequency'] < max_support]
+    concepts_df = pd.DataFrame(mine_clusters_info(attr_extents, data, max_support, pat_structure, stable_extents, pattern_names, use_tqdm))
 
     clustering, reward_log = clusterise_v0(concepts_df, overlap_weight, n_concepts_weight)
     clusters_df = concepts_df.loc[clustering]
 
-    return clusters_df 
+    return clusters_df
+
+
+def mine_clusters_info(
+        stable_extents: Iterable[frozenbitarray],
+        attr_extents: list[frozenbitarray], pat_structure: PS.CartesianPS,
+        data: list,
+        min_support: float, max_support: float,
+        pattern_names: list[str] = None, use_tqdm: bool = False
+) -> dict[str, list]:
+    pattern_names = [f"x{i}" for i in range(len(pat_structure.basic_structures))]
+
+    stable_extents = [ext for ext in stable_extents if min_support*len(ext) <= ext.count() <= max_support*len(ext)]
+    stable_extents = sorted(stable_extents, key=lambda ext: ext.count(), reverse=True)
+
+    stable_intents = [pat_structure.intent(data, ext.search(True))
+                      for ext in tqdm(stable_extents, desc='Compute intents', disable=not use_tqdm)]
+
+    delta_stabilities = [csp.indices.delta_stability_by_description(
+        describe_with_attributes(extent, attr_extents), attr_extents)
+        for extent in stable_extents
+    ]
+
+    top_intent = pat_structure.intent(data)
+    levels = [len(find_key_dimensions(intent, data, pat_structure, top_intent)) for intent in stable_intents]
+
+    return dict(
+        extent=stable_extents,
+        intent=stable_intents,
+        delta_stability=delta_stabilities,
+        support=list(map(frozenbitarray.count, stable_extents)),
+        frequency=list(map(lambda extent: extent.count() / len(extent), stable_extents)),
+        intent_human=list(map(lambda intent: pat_structure.verbalize(intent, pattern_names=pattern_names), stable_intents)),
+        level=levels
+
+    )
