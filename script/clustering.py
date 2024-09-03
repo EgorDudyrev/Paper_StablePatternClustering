@@ -11,7 +11,7 @@ import caspailleur as csp
 from bitarray import frozenbitarray
 from functools import reduce
 from itertools import combinations
-from bitarray.util import subset as ba_subset
+from bitarray.util import subset as ba_subset, count_and
 from tqdm.auto import tqdm
 
 
@@ -69,7 +69,7 @@ def clustering_reward2(
         balance_weight: float = 0,
         stability_weight: float = 0,
         complexity_weight: float = 0,
-        n_concepts_max: int = 10
+        n_concepts_max: int = 10,
 ) -> tuple[float, dict[str, float]]:
     empty_extent = concepts_info['extent'][0] & ~concepts_info['extent'][0]
     n_objects = len(empty_extent)
@@ -80,9 +80,9 @@ def clustering_reward2(
     coverage_score /= n_objects  # normalisation
     coverage_weight = 1
 
-    if len(concepts_indices) > 1:
+    if len(concepts_indices) > 1 and overlap_weight:
         overlap_score = sum(
-            (concepts_info['extent'][idx1] & concepts_info['extent'][idx2]).count()
+            count_and(concepts_info['extent'][idx1], concepts_info['extent'][idx2])
             for idx1, idx2 in combinations(concepts_indices, 2)
         )
         overlap_score /= n_objects * len(concepts_indices) * (len(concepts_indices) - 1) / 2  # normalisation
@@ -92,19 +92,19 @@ def clustering_reward2(
     n_concepts_score = len(concepts_indices)
     n_concepts_score /= n_concepts_max  # normalisation
 
-    if concepts_indices:
-        balance_score = np.std([concepts_info['extent'][idx] for idx in concepts_indices], ddof=1)
+    if len(concepts_indices) > 1 and balance_weight:
+        balance_score = np.std([concepts_info['support'][idx] for idx in concepts_indices], ddof=1)
         balance_score /= n_objects  # normalisation
     else:
         balance_score = 0
 
-    if concepts_indices:
+    if concepts_indices and stability_weight:
         stability_score = sum(concepts_info['delta_stability'][idx] for idx in concepts_indices)/len(concepts_indices)
         stability_score /= n_objects  # normalisation
     else:
         stability_score = 0
 
-    if concepts_indices:
+    if concepts_indices and complexity_weight:
         complexity_score = sum(concepts_info['level'][idx] for idx in concepts_indices)/len(concepts_indices)
         complexity_score /= len(concepts_info['intent'][0])  # normalisation by n_dimensions
     else:
@@ -163,12 +163,13 @@ def clusterise_v1(
         thrift_factor: int,
         n_clusters_min: int, n_clusters_max: int
 ) -> tuple[list[int], pd.DataFrame, pd.DataFrame]:
+    n_concepts = len(concepts_info['extent'])
     reward_params = dict(
         overlap_weight=overlap_weight, n_concepts_weight=n_concepts_weight,
         balance_weight=balance_weight, stability_weight=stability_weight, complexity_weight=complexity_weight,
-        n_concepts_max=n_clusters_max, concepts_info=concepts_info
+        n_concepts_max=n_clusters_max, concepts_info=concepts_info,
     )
-    n_concepts = len(concepts_info['extent'])
+
     clusterings: dict[tuple[int, ...], float] = {}
 
     basic_reward = clustering_reward2([], **reward_params)[0]
@@ -179,8 +180,9 @@ def clusterise_v1(
             clusterings[tuple(selected_concepts)] = selected_reward
             continue
 
+        selected_concepts_set = set(selected_concepts)
         next_rewards = ((next_i, clustering_reward2(selected_concepts+[next_i], **reward_params)[0])
-                        for next_i in range(n_concepts))
+                        for next_i in range(n_concepts) if next_i not in selected_concepts_set)
         next_rewards = {next_i: next_reward for next_i, next_reward in next_rewards if next_reward > selected_reward}
 
         if not next_rewards and len(selected_concepts) >= n_clusters_min:
@@ -283,9 +285,9 @@ def mine_clusters_info(
         extent=stable_extents,
         intent=stable_intents,
         delta_stability=delta_stabilities,
-        support=map(frozenbitarray.count, stable_extents),
-        frequency=map(lambda extent: extent.count() / len(extent), stable_extents),
-        intent_human=map(lambda intent: pat_structure.verbalize(intent, pattern_names=pattern_names), stable_intents),
+        support=list(map(frozenbitarray.count, stable_extents)),
+        frequency=list(map(lambda extent: extent.count() / len(extent), stable_extents)),
+        intent_human=list(map(lambda intent: pat_structure.verbalize(intent, pattern_names=pattern_names), stable_intents)),
         level=levels
 
     )
