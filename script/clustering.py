@@ -98,11 +98,17 @@ def clustering_reward2(
     else:
         balance_score = 0
 
-    stability_score = sum(concepts_info.at[idx, 'delta_stability'] for idx in concepts_indices)/len(concepts_indices)
-    stability_score /= n_objects  # normalisation
+    if concepts_indices:
+        stability_score = sum(concepts_info.at[idx, 'delta_stability'] for idx in concepts_indices)/len(concepts_indices)
+        stability_score /= n_objects  # normalisation
+    else:
+        stability_score = 0
 
-    complexity_score = sum(concepts_info.at[idx, 'level'] for idx in concepts_indices)/len(concepts_indices)
-    complexity_score /= len(concepts_info['intent'].iat[0])  # normalisation
+    if concepts_indices:
+        complexity_score = sum(concepts_info.at[idx, 'level'] for idx in concepts_indices)/len(concepts_indices)
+        complexity_score /= len(concepts_info['intent'].iat[0])  # normalisation
+    else:
+        complexity_score = 0
 
     reward, reward_detailed = 0, {}
     for score_name in ['coverage', 'overlap', 'n_concepts', 'balance', 'stability', 'complexity']:
@@ -151,18 +157,29 @@ def clusterise_v1(
         concepts_info: pd.DataFrame,
         overlap_weight: float,
         n_concepts_weight: float,
+        balance_weight: float,
+        stability_weight: float,
         complexity_weight: float,
         thrift_factor: int,
-        n_clusters_min: int
+        n_clusters_min: int, n_clusters_max: int,
 ) -> tuple[list[int], pd.DataFrame]:
     clusterings: dict[tuple[int, ...], float] = {}
+    reward_params = dict(
+        overlap_weight=overlap_weight, n_concepts_weight=n_concepts_weight,
+        balance_weight=balance_weight, stability_weight=stability_weight, complexity_weight=complexity_weight,
+        n_concepts_max=n_clusters_max, concepts_info=concepts_info
+    )
 
-    basic_reward = clustering_reward([], concepts_info, overlap_weight, n_concepts_weight)[0]
+    basic_reward = clustering_reward2([], **reward_params)[0]
     queue = deque([([], basic_reward)])
     while queue:
         selected_concepts, selected_reward = queue.popleft()
+        if len(selected_concepts) == n_clusters_max:
+            clusterings[tuple(selected_concepts)] = selected_reward
+            continue
+
         next_rewards = (
-            (next_i, clustering_reward(selected_concepts+[next_i], concepts_info, overlap_weight, n_concepts_weight)[0])
+            (next_i, clustering_reward2(selected_concepts+[next_i], **reward_params)[0])
             for next_i in concepts_info.index
         )
         next_rewards = {next_i: next_reward for next_i, next_reward in next_rewards if next_reward > selected_reward}
@@ -176,12 +193,12 @@ def clusterise_v1(
     best_clustering = list(max(clusterings, key=lambda indices: clusterings[indices]))
 
     rewards_log = pd.DataFrame(
-        [clustering_reward(best_clustering[:i], concepts_info, overlap_weight, n_concepts_weight)[1]
+        [clustering_reward2(best_clustering[:i], **reward_params)[1]
          for i in range(len(best_clustering)+1)],
         index=pd.Series(['ø'] + best_clustering, name='Added concept idx')
     )
     best_clusterings_log = pd.DataFrame(
-        [{'clustering': indices} | clustering_reward(indices, concepts_info, overlap_weight, n_concepts_weight)[1]
+        [{'clustering': indices} | clustering_reward2(indices, **reward_params)[1]
          for indices in heapq.nlargest(5, clusterings, key=lambda indices: clusterings[indices])]
     ).set_index('clustering')
     return best_clustering, rewards_log, best_clusterings_log
