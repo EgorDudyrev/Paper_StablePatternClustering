@@ -88,7 +88,7 @@ def clustering_reward2(
         overlap_score = sum(
             count_and(concepts_info['extent'][idx1], concepts_info['extent'][idx2])
             for idx1, idx2 in combinations(concepts_indices, 2)
-        ) / (len(concepts_indices) * (len(concepts_indices)-1)) * 2
+        )
         overlap_score /= max_support  # normalisation
     else:
         overlap_score = 0
