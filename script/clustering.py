@@ -74,10 +74,13 @@ def clustering_reward2(
     empty_extent = concepts_info['extent'][0] & ~concepts_info['extent'][0]
     n_objects = len(empty_extent)
 
-    coverage_score = reduce(
-        frozenbitarray.__or__, [concepts_info['extent'][idx] for idx in concepts_indices], empty_extent
-    ).count()
-    coverage_score /= n_objects  # normalisation
+    if concepts_indices:
+        coverage_score = reduce(
+            frozenbitarray.__or__, [concepts_info['extent'][idx] for idx in concepts_indices], empty_extent
+        ).count()
+        coverage_score /= n_objects  # normalisation
+    else:
+        coverage_score = -np.inf
     coverage_weight = 1
 
     if len(concepts_indices) > 1 and overlap_weight:
