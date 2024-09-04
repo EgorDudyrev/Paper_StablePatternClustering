@@ -1,6 +1,7 @@
 from matplotlib.patches import Rectangle
 from matplotlib.colors import to_rgba
 import pandas as pd
+from itertools import cycle
 
 
 def init_axis(ax, title=None, xticks=None, yticks=None, xticklabels=None, yticklabels=None, grid_params=None):
@@ -32,15 +33,19 @@ def draw_2d_description(
     ax.add_patch(Rectangle((x0, y0), x1-x0, y1-y0, **patch_params))
 
 
-def draw_clustering(ax, cluster_idxs: list[int], clusters_info: pd.DataFrame, cluster_colors: list[str] = None):
+def draw_clustering(
+        ax, cluster_idxs: list[int], clusters_info: pd.DataFrame, cluster_colors: list[str] = None,
+        face_alpha=0.4, edge_alpha_factor=1
+):
     cluster_colors = ['goldenrod', 'navy', 'green', 'red', 'purple'] if cluster_colors is None else cluster_colors
+    cluster_colors = cycle(cluster_colors)
     for concept_idx, clr in zip(cluster_idxs, cluster_colors):
         d_stab = clusters_info.at[concept_idx, 'delta_stability']/clusters_info['delta_stability'].max()
         intent = clusters_info.at[concept_idx, 'intent']
         draw_2d_description(
             ax, intent,
             patch_params=dict(
-                fc=to_rgba(clr, 0.4), ec=to_rgba(clr, 1*d_stab), linewidth=5, zorder=1,
+                fc=to_rgba(clr, face_alpha), ec=to_rgba(clr, edge_alpha_factor*d_stab), linewidth=3, zorder=1,
                 label=f'Concept {concept_idx} (∆stab={clusters_info.at[concept_idx, "delta_stability"]})'
             )
         )
