@@ -66,7 +66,7 @@ def clustering_reward2(
         concepts_info: dict[str, list],
         overlap_weight: float = 0,
         n_concepts_weight: float = 0,
-        balance_weight: float = 0,
+        imbalance_weight: float = 0,
         stability_weight: float = 0,
         complexity_weight: float = 0,
         n_concepts_max: int = 10,
@@ -96,11 +96,11 @@ def clustering_reward2(
     n_concepts_score = len(concepts_indices)
     n_concepts_score /= n_concepts_max  # normalisation
 
-    if len(concepts_indices) > 1 and balance_weight:
-        balance_score = np.std([concepts_info['support'][idx] for idx in concepts_indices], ddof=1)
-        balance_score /= max_support  # normalisation
+    if len(concepts_indices) > 1 and imbalance_weight:
+        imbalance_score = np.std([concepts_info['support'][idx] for idx in concepts_indices], ddof=1)
+        imbalance_score /= max_support  # normalisation
     else:
-        balance_score = 0
+        imbalance_score = 0
 
     if concepts_indices and stability_weight:
         stability_score = sum(concepts_info['delta_stability'][idx] for idx in concepts_indices)/len(concepts_indices)
@@ -116,8 +116,8 @@ def clustering_reward2(
         complexity_score = 0
 
     reward, reward_detailed = 0, {}
-    for score_name in ['coverage', 'overlap', 'n_concepts', 'balance', 'stability', 'complexity']:
-        sign = 1 if score_name in {'coverage', 'balance', 'stability'} else -1
+    for score_name in ['coverage', 'overlap', 'n_concepts', 'imbalance', 'stability', 'complexity']:
+        sign = 1 if score_name in {'coverage', 'stability'} else -1
         reward += locals()[f"{score_name}_weight"] * sign * locals()[f"{score_name}_score"]
         reward_detailed[score_name] = locals()[f"{score_name}_score"]
 
@@ -162,7 +162,7 @@ def clusterise_v1(
         concepts_info: dict[str, list],
         overlap_weight: float,
         n_concepts_weight: float,
-        balance_weight: float,
+        imbalance_weight: float,
         stability_weight: float,
         complexity_weight: float,
         thrift_factor: int,
@@ -172,7 +172,7 @@ def clusterise_v1(
     n_concepts = len(concepts_info['extent'])
     reward_params = dict(
         overlap_weight=overlap_weight, n_concepts_weight=n_concepts_weight,
-        balance_weight=balance_weight, stability_weight=stability_weight, complexity_weight=complexity_weight,
+        imbalance_weight=imbalance_weight, stability_weight=stability_weight, complexity_weight=complexity_weight,
         n_concepts_max=n_clusters_max, concepts_info=concepts_info,
     )
 
