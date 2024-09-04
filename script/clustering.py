@@ -73,6 +73,7 @@ def clustering_reward2(
 ) -> tuple[float, dict[str, float]]:
     empty_extent = concepts_info['extent'][0] & ~concepts_info['extent'][0]
     n_objects = len(empty_extent)
+    max_support = max(concepts_info['support'])
 
     if concepts_indices:
         coverage_score = reduce(
@@ -87,8 +88,8 @@ def clustering_reward2(
         overlap_score = sum(
             count_and(concepts_info['extent'][idx1], concepts_info['extent'][idx2])
             for idx1, idx2 in combinations(concepts_indices, 2)
-        )
-        overlap_score /= n_objects * len(concepts_indices) * (len(concepts_indices) - 1) / 2  # normalisation
+        ) / (len(concepts_indices) * (len(concepts_indices)-1)) * 2
+        overlap_score /= max_support  # normalisation
     else:
         overlap_score = 0
 
@@ -97,13 +98,14 @@ def clustering_reward2(
 
     if len(concepts_indices) > 1 and balance_weight:
         balance_score = np.std([concepts_info['support'][idx] for idx in concepts_indices], ddof=1)
-        balance_score /= n_objects  # normalisation
+        balance_score /= max_support  # normalisation
     else:
         balance_score = 0
 
     if concepts_indices and stability_weight:
         stability_score = sum(concepts_info['delta_stability'][idx] for idx in concepts_indices)/len(concepts_indices)
-        stability_score /= n_objects  # normalisation
+        max_stability = max(concepts_info['delta_stability'])
+        stability_score /= max_stability  # normalisation
     else:
         stability_score = 0
 
