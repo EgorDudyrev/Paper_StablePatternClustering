@@ -1,6 +1,7 @@
 from matplotlib.patches import Rectangle
 from matplotlib.colors import to_rgba
 import pandas as pd
+from itertools import cycle
 
 
 def init_axis(ax, title=None, xticks=None, yticks=None, xticklabels=None, yticklabels=None, grid_params=None):
@@ -34,6 +35,7 @@ def draw_2d_description(
 
 def draw_clustering(ax, cluster_idxs: list[int], clusters_info: pd.DataFrame, cluster_colors: list[str] = None):
     cluster_colors = ['goldenrod', 'navy', 'green', 'red', 'purple'] if cluster_colors is None else cluster_colors
+    cluster_colors = cycle(cluster_colors)
     for concept_idx, clr in zip(cluster_idxs, cluster_colors):
         d_stab = clusters_info.at[concept_idx, 'delta_stability']/clusters_info['delta_stability'].max()
         intent = clusters_info.at[concept_idx, 'intent']
