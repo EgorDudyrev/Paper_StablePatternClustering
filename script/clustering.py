@@ -1,7 +1,7 @@
 import heapq
 from collections import deque
 from heapq import nlargest
-from typing import Iterable, Union
+from typing import Iterable, Union, Iterator
 
 import numpy as np
 import pandas as pd
@@ -11,7 +11,7 @@ import caspailleur as csp
 from bitarray import frozenbitarray
 from functools import reduce
 from itertools import combinations
-from bitarray.util import subset as ba_subset, count_and
+from bitarray.util import subset as ba_subset, count_and, count_or
 from tqdm.auto import tqdm
 
 
@@ -122,6 +122,40 @@ def clustering_reward2(
         reward_detailed[score_name] = locals()[f"{score_name}_score"]
 
     return reward, reward_detailed
+
+
+def evaluate_clustering_measures(concepts_indices: list[int], concepts_info: dict[str, list]) -> dict[str, float]:
+    empty_extent = concepts_info['extent'][0] & ~concepts_info['extent'][0]
+
+    scores = dict()
+    scores['coverage'] = reduce(
+        frozenbitarray.__or__, [concepts_info['extent'][idx] for idx in concepts_indices], empty_extent
+    ).count()
+
+    scores['overlap'] = sum(
+        count_and(concepts_info['extent'][idx1], concepts_info['extent'][idx2])
+        for idx1, idx2 in combinations(concepts_indices, 2)
+    )
+
+    scores['size'] = len(concepts_indices)
+
+    scores['imbalance'] = 0
+    if len(concepts_indices) > 1:
+        scores['imbalance'] = np.std([concepts_info['support'][idx] for idx in concepts_indices], ddof=1)
+
+    scores['stability'] = 0
+    if concepts_indices:
+        scores['stability'] = np.mean([concepts_info['delta_stability'][idx] for idx in concepts_indices])
+
+    scores['complexity'] = 0
+    if concepts_indices:
+        scores['complexity'] = np.mean([concepts_info['level'][idx] for idx in concepts_indices])
+
+    scores['density'] = 1
+    if concepts_indices and 'density' in concepts_info:
+        scores['density'] = np.mean([concepts_info['density'][idx] for idx in concepts_indices])
+
+    return scores
 
 
 def describe_with_attributes(extent, attr_extents) -> list[int]:
@@ -272,7 +306,7 @@ def mine_clusters_info(
         stable_extents: Iterable[frozenbitarray],
         attr_extents: list[frozenbitarray], pat_structure: PS.CartesianPS,
         data: list,
-        min_support: float, max_support: float,
+        min_support: float = 0, max_support: float = 1,
         pattern_names: list[str] = None, use_tqdm: bool = False
 ) -> dict[str, list]:
     pattern_names = [f"x{i}" for i in range(len(pat_structure.basic_structures))]
@@ -291,6 +325,11 @@ def mine_clusters_info(
     top_intent = pat_structure.intent(data)
     levels = [len(find_key_dimensions(intent, data, pat_structure, top_intent)) for intent in stable_intents]
 
+    interval_structures = [i for i, base_ps in enumerate(pat_structure.basic_structures)
+                           if isinstance(base_ps, PS.IntervalPS)]
+    density = [reduce(float.__mul__, [1/(intent[i][1]-intent[i][0]) for i in interval_structures], float(extent.count()))
+               for intent, extent in zip(stable_intents, stable_extents)]
+
     return dict(
         extent=stable_extents,
         intent=stable_intents,
@@ -298,6 +337,91 @@ def mine_clusters_info(
         support=list(map(frozenbitarray.count, stable_extents)),
         frequency=list(map(lambda extent: extent.count() / len(extent), stable_extents)),
         intent_human=list(map(lambda intent: pat_structure.verbalize(intent, pattern_names=pattern_names), stable_intents)),
-        level=levels
-
+        level=levels,
+        density=density
     )
+
+
+def mine_rare_itemsets(
+        attribute_extents: list[frozenbitarray], max_support: int,
+        max_length: int = 5
+) -> Iterator[tuple[frozenbitarray, ...]]:
+    n_attrs = len(attribute_extents)
+    total_extent = attribute_extents[0] | ~attribute_extents[0]
+
+    prev_level_generators, cur_level_gens = None, {tuple(): total_extent.count()}
+    for level in range(1, max_length+1):
+        prev_level_generators, cur_level_gens = cur_level_gens, {}
+        if not prev_level_generators:
+            break
+
+        for old_generator in prev_level_generators:
+            old_extent = reduce(frozenbitarray.__and__, map(attribute_extents.__getitem__, old_generator), total_extent)
+            next_attr_start = old_generator[-1]+1 if old_generator else 0
+            for next_attr in range(next_attr_start, n_attrs):
+                new_generator = old_generator + (next_attr,)
+                new_support = (old_extent & attribute_extents[next_attr]).count()
+                sub_generators = (new_generator[:i] + new_generator[i+1:] for i in range(level))
+
+                not_a_generator = any(
+                    sub_gen not in prev_level_generators or new_support == prev_level_generators[sub_gen]
+                    for sub_gen in sub_generators
+                )
+                if not_a_generator:
+                    continue
+
+                if new_support < max_support:
+                    yield new_generator
+                    continue
+
+                cur_level_gens[new_generator] = new_support
+
+
+def mine_clusterings(
+        attribute_extents: list[frozenbitarray], min_support: int,
+        max_length: int = 5, min_added_coverage: int = 1
+) -> Iterator[tuple[frozenbitarray, ...]]:
+    """Find minimal clusterings that cover at least `min_support` objects
+    and where each cluster adds at least `min_added_coverage` objects
+
+    The algorithm is the dual version of MRG-Exp (aka Carpathia-G-Rare) algorithm
+    proposed by L. Szathmary et al. (2007) in "Towards Rare Itemset Mining"
+    """
+    n_attrs = len(attribute_extents)
+    empty_extent = attribute_extents[0] & ~attribute_extents[0]
+
+    prev_level_generators, cur_level_gens = None, {tuple(): 0}
+    for level in range(1, max_length+1):
+        prev_level_generators, cur_level_gens = cur_level_gens, {}
+        if not prev_level_generators:
+            break
+
+        for old_generator in prev_level_generators:
+            old_extent = reduce(frozenbitarray.__or__, map(attribute_extents.__getitem__, old_generator), empty_extent)
+            next_attr_start = old_generator[-1]+1 if old_generator else 0
+            for next_attr in range(next_attr_start, n_attrs):
+                new_generator = old_generator + (next_attr,)
+                new_support = (old_extent | attribute_extents[next_attr]).count()
+                sub_generators = (new_generator[:i] + new_generator[i+1:] for i in range(level))
+
+                not_a_generator = any(sub_gen not in prev_level_generators
+                                      or new_support - prev_level_generators[sub_gen] < min_added_coverage
+                                      for sub_gen in sub_generators)
+                if not_a_generator:
+                    continue
+
+                if new_support > min_support:
+                    yield new_generator
+                    continue
+
+                cur_level_gens[new_generator] = new_support
+
+
+def select_sparse_extents(extents: list[frozenbitarray], jaccard_thold: float) -> list[frozenbitarray]:
+    sparse_extents = []
+    for i, extent in enumerate(extents):
+        not_like_others = all(count_and(extent, other) / count_or(extent, other) <= jaccard_thold
+                              for other in sparse_extents)
+        if not_like_others:
+            sparse_extents.append(extent)
+    return sparse_extents
