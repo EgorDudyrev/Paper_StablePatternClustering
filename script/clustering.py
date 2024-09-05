@@ -124,6 +124,40 @@ def clustering_reward2(
     return reward, reward_detailed
 
 
+def evaluate_clustering_measures(concepts_indices: list[int], concepts_info: dict[str, list]) -> dict[str, float]:
+    empty_extent = concepts_info['extent'][0] & ~concepts_info['extent'][0]
+
+    scores = dict()
+    scores['coverage'] = reduce(
+        frozenbitarray.__or__, [concepts_info['extent'][idx] for idx in concepts_indices], empty_extent
+    ).count()
+
+    scores['overlap'] = sum(
+        count_and(concepts_info['extent'][idx1], concepts_info['extent'][idx2])
+        for idx1, idx2 in combinations(concepts_indices, 2)
+    )
+
+    scores['size'] = len(concepts_indices)
+
+    scores['imbalance'] = 0
+    if len(concepts_indices) > 1:
+        scores['imbalance'] = np.std([concepts_info['support'][idx] for idx in concepts_indices], ddof=1)
+
+    scores['stability'] = 0
+    if concepts_indices:
+        scores['stability'] = np.mean([concepts_info['delta_stability'][idx] for idx in concepts_indices])
+
+    scores['complexity'] = 0
+    if concepts_indices:
+        scores['complexity'] = np.mean([concepts_info['level'][idx] for idx in concepts_indices])
+
+    scores['density'] = 1
+    if concepts_indices and 'density' in concepts_info:
+        scores['density'] = np.mean([concepts_info['density'][idx] for idx in concepts_indices])
+
+    return scores
+
+
 def describe_with_attributes(extent, attr_extents) -> list[int]:
     """Find attribute-based intent for a given extent. So not a 'pattern intent'"""
     return [i for i, attr_extent in enumerate(attr_extents) if ba_subset(extent, attr_extent)]
@@ -272,7 +306,7 @@ def mine_clusters_info(
         stable_extents: Iterable[frozenbitarray],
         attr_extents: list[frozenbitarray], pat_structure: PS.CartesianPS,
         data: list,
-        min_support: float, max_support: float,
+        min_support: float = 0, max_support: float = 1,
         pattern_names: list[str] = None, use_tqdm: bool = False
 ) -> dict[str, list]:
     pattern_names = [f"x{i}" for i in range(len(pat_structure.basic_structures))]
