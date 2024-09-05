@@ -341,3 +341,43 @@ def mine_rare_itemsets(
                     continue
 
                 cur_level_gens[new_generator] = new_support
+
+
+def mine_clusterings(
+        attribute_extents: list[frozenbitarray], min_support: int,
+        max_length: int = 5, min_added_coverage: int = 1
+) -> Iterator[tuple[frozenbitarray, ...]]:
+    """Find minimal clusterings that cover at least `min_support` objects
+    and where each cluster adds at least `min_added_coverage` objects
+
+    The algorithm is the dual version of MRG-Exp (aka Carpathia-G-Rare) algorithm
+    proposed by L. Szathmary et al. (2007) in "Towards Rare Itemset Mining"
+    """
+    n_attrs = len(attribute_extents)
+    empty_extent = attribute_extents[0] & ~attribute_extents[0]
+
+    prev_level_generators, cur_level_gens = None, {tuple(): 0}
+    for level in range(1, max_length+1):
+        prev_level_generators, cur_level_gens = cur_level_gens, {}
+        if not prev_level_generators:
+            break
+
+        for old_generator in prev_level_generators:
+            old_extent = reduce(frozenbitarray.__or__, map(attribute_extents.__getitem__, old_generator), empty_extent)
+            next_attr_start = old_generator[-1]+1 if old_generator else 0
+            for next_attr in range(next_attr_start, n_attrs):
+                new_generator = old_generator + (next_attr,)
+                new_support = (old_extent | attribute_extents[next_attr]).count()
+                sub_generators = (new_generator[:i] + new_generator[i+1:] for i in range(level))
+
+                not_a_generator = any(sub_gen not in prev_level_generators
+                                      or new_support - prev_level_generators[sub_gen] < min_added_coverage
+                                      for sub_gen in sub_generators)
+                if not_a_generator:
+                    continue
+
+                if new_support > min_support:
+                    yield new_generator
+                    continue
+
+                cur_level_gens[new_generator] = new_support
