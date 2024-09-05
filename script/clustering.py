@@ -1,7 +1,7 @@
 import heapq
 from collections import deque
 from heapq import nlargest
-from typing import Iterable, Union
+from typing import Iterable, Union, Iterator
 
 import numpy as np
 import pandas as pd
@@ -301,3 +301,43 @@ def mine_clusters_info(
         level=levels
 
     )
+
+
+def mine_rare_itemsets(
+        attribute_extents: list[frozenbitarray], max_support: int,
+        max_length: int = 5
+) -> Iterator[tuple[frozenbitarray, ...]]:
+    from icecream import ic
+
+    n_attrs = len(attribute_extents)
+    total_extent = attribute_extents[0] | ~attribute_extents[0]
+
+    prev_level_generators, cur_level_gens = None, {tuple(): total_extent.count()}
+    for level in range(1, max_length+1):
+        prev_level_generators, cur_level_gens = cur_level_gens, {}
+        if not prev_level_generators:
+            break
+        # ic(level)
+        # ic(prev_level_generators)
+
+        for old_generator in prev_level_generators:
+            old_extent = reduce(frozenbitarray.__and__, map(attribute_extents.__getitem__, old_generator), total_extent)
+            next_attr_start = old_generator[-1]+1 if old_generator else 0
+            for next_attr in range(next_attr_start, n_attrs):
+                new_generator = old_generator + (next_attr,)
+                new_support = (old_extent & attribute_extents[next_attr]).count()
+                sub_generators = (new_generator[:i] + new_generator[i+1:] for i in range(level))
+                # TODO: Optimise for when given a maximal pairwise overlap
+                not_a_generator = any(
+                    sub_gen not in prev_level_generators or new_support == prev_level_generators[sub_gen]
+                    for sub_gen in sub_generators
+                )
+                # ic(old_generator, new_generator, next_attr, not_a_generator)
+                if not_a_generator:
+                    continue
+
+                if new_support < max_support:
+                    yield new_generator
+                    continue
+
+                cur_level_gens[new_generator] = new_support
