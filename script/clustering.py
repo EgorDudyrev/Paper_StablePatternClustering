@@ -11,7 +11,7 @@ import caspailleur as csp
 from bitarray import frozenbitarray
 from functools import reduce
 from itertools import combinations
-from bitarray.util import subset as ba_subset, count_and
+from bitarray.util import subset as ba_subset, count_and, count_or
 from tqdm.auto import tqdm
 
 
@@ -346,8 +346,6 @@ def mine_rare_itemsets(
         attribute_extents: list[frozenbitarray], max_support: int,
         max_length: int = 5
 ) -> Iterator[tuple[frozenbitarray, ...]]:
-    from icecream import ic
-
     n_attrs = len(attribute_extents)
     total_extent = attribute_extents[0] | ~attribute_extents[0]
 
@@ -356,8 +354,6 @@ def mine_rare_itemsets(
         prev_level_generators, cur_level_gens = cur_level_gens, {}
         if not prev_level_generators:
             break
-        # ic(level)
-        # ic(prev_level_generators)
 
         for old_generator in prev_level_generators:
             old_extent = reduce(frozenbitarray.__and__, map(attribute_extents.__getitem__, old_generator), total_extent)
@@ -366,12 +362,11 @@ def mine_rare_itemsets(
                 new_generator = old_generator + (next_attr,)
                 new_support = (old_extent & attribute_extents[next_attr]).count()
                 sub_generators = (new_generator[:i] + new_generator[i+1:] for i in range(level))
-                # TODO: Optimise for when given a maximal pairwise overlap
+
                 not_a_generator = any(
                     sub_gen not in prev_level_generators or new_support == prev_level_generators[sub_gen]
                     for sub_gen in sub_generators
                 )
-                # ic(old_generator, new_generator, next_attr, not_a_generator)
                 if not_a_generator:
                     continue
 
@@ -420,3 +415,13 @@ def mine_clusterings(
                     continue
 
                 cur_level_gens[new_generator] = new_support
+
+
+def select_sparse_extents(extents: list[frozenbitarray], jaccard_thold: float) -> list[frozenbitarray]:
+    sparse_extents = []
+    for i, extent in enumerate(extents):
+        not_like_others = all(count_and(extent, other) / count_or(extent, other) <= jaccard_thold
+                              for other in sparse_extents)
+        if not_like_others:
+            sparse_extents.append(extent)
+    return sparse_extents
