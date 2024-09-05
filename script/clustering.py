@@ -291,6 +291,11 @@ def mine_clusters_info(
     top_intent = pat_structure.intent(data)
     levels = [len(find_key_dimensions(intent, data, pat_structure, top_intent)) for intent in stable_intents]
 
+    interval_structures = [i for i, base_ps in enumerate(pat_structure.basic_structures)
+                           if isinstance(base_ps, PS.IntervalPS)]
+    density = [reduce(float.__mul__, [1/(intent[i][1]-intent[i][0]) for i in interval_structures], float(extent.count()))
+               for intent, extent in zip(stable_intents, stable_extents)]
+
     return dict(
         extent=stable_extents,
         intent=stable_intents,
@@ -298,8 +303,8 @@ def mine_clusters_info(
         support=list(map(frozenbitarray.count, stable_extents)),
         frequency=list(map(lambda extent: extent.count() / len(extent), stable_extents)),
         intent_human=list(map(lambda intent: pat_structure.verbalize(intent, pattern_names=pattern_names), stable_intents)),
-        level=levels
-
+        level=levels,
+        density=density
     )
 
 
